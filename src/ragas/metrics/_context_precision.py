@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib # Added for test_case_id generation
 import logging
 import typing as t
 from dataclasses import dataclass, field
@@ -7,8 +8,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from pydantic import BaseModel, Field
 
+from ragas.cache import ComprehensiveSemanticCache 
 from ragas.dataset_schema import SingleTurnSample
 from ragas.metrics._string import NonLLMStringSimilarity
+import ragas.config # Added import for global cache
 from ragas.metrics.base import (
     MetricOutputType,
     MetricType,
@@ -109,6 +112,17 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
         default_factory=ContextPrecisionPrompt
     )
     max_retries: int = 1
+    comprehensive_cache: t.Optional[ComprehensiveSemanticCache] = field(default=None, repr=False) 
+
+    def __post_init__(self):
+        # Initialize comprehensive_cache from global config if not already set
+        if getattr(self, 'comprehensive_cache', None) is None:
+            self.comprehensive_cache = ragas.config.ragas_comprehensive_cache
+        
+        # Call super().__post_init__() if MetricWithLLM or SingleTurnMetric had one.
+        # Assuming they don't for now, or it's not critical for this attribute.
+        # If they do, and it's important, this would be:
+        # super().__post_init__() 
 
     def _get_row_attributes(self, row: t.Dict) -> t.Tuple[str, t.List[str], t.Any]:
         return row["user_input"], row["retrieved_contexts"], row["reference"]
@@ -147,27 +161,113 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
         assert self.llm is not None, "LLM is not set"
 
         user_input, retrieved_contexts, reference = self._get_row_attributes(row)
-        responses = []
-        for context in retrieved_contexts:
-            verdicts: t.List[Verification] = (
-                await self.context_precision_prompt.generate_multiple(
-                    data=QAC(
-                        question=user_input,
-                        context=context,
-                        answer=reference,
-                    ),
-                    llm=self.llm,
-                    callbacks=callbacks,
+        
+        # Create a unique ID for this test case based on user_input and reference
+        test_case_comps = (user_input, str(reference)) # Ensure reference is string for hashing
+        test_case_id_str = "".join(test_case_comps)
+        test_case_id = hashlib.sha256(test_case_id_str.encode()).hexdigest()
+
+        current_cache_instance = getattr(self, "comprehensive_cache", None)
+        
+        answers: t.List[Verification] = []
+
+        for i, current_context in enumerate(retrieved_contexts):
+            # The "prompt" for caching purposes here is the current_context itself,
+            # as the LLM call's variability for this metric is driven by the context.
+            # The user_input and reference are fixed for all contexts within this _ascore call.
+            cache_key_for_context = current_context # Or a hash if contexts are very long and store needs shorter keys
+
+            llm_result: t.Optional[Verification] = None
+
+            if current_cache_instance:
+                # Note: ComprehensiveSemanticCache expects `current_prompt` for semantic comparison.
+                # Here, `cache_key_for_context` (which is `current_context`) acts as this "prompt".
+                # The 'value' stored/retrieved will be the `Verification` object.
+                # We are using test_case_id to scope, and cache_key_for_context (current_context)
+                # as the specific part key for ComprehensiveSemanticCache's get/set.
+                # If CSC's get/set were designed for prompt -> LLMResponse, this is a slight adaptation.
+                # Let's assume CSC's `get` takes `test_case_id` and `key` (current_context here)
+                # and `set` takes `test_case_id`, `key` (current_context), and `value` (Verification).
+                # For semantic matching on current_context, CSC's internal logic would handle embedding it.
+
+                # For ComprehensiveSemanticCache, the 'key' is the prompt.
+                # The 'value' is the LLMResult.
+                # Here, the "prompt" that varies per LLM call is effectively the `current_context`.
+                # The "LLMResult" is the `Verification` object.
+                # So, we'll use current_context as the "prompt" for the cache.
+                cached_value = current_cache_instance.get(
+                    test_case_id=test_case_id, 
+                    current_prompt=current_context # current_context is the varying part for semantic check
                 )
+                if cached_value is not None:
+                    if isinstance(cached_value, Verification):
+                        llm_result = cached_value
+                        logger.debug(f"Cache HIT for test_case_id='{test_case_id}', context_idx={i}")
+                    else:
+                        logger.warning(
+                            f"Cache HIT but unexpected type for test_case_id='{test_case_id}', context_idx={i}. Expected Verification, got {type(cached_value)}. Ignoring."
+                        )
+            
+            if llm_result is None: # Cache MISS or invalid cached type
+                logger.debug(f"Cache MISS for test_case_id='{test_case_id}', context_idx={i}. Calling LLM.")
+                # Define the actual LLM call as a nested function
+                async def _llm_call_for_context() -> t.Optional[Verification]:
+                    # Original LLM call logic for a single context
+                    verdicts_list: t.List[Verification] = (
+                        await self.context_precision_prompt.generate_multiple(
+                            data=QAC(
+                                question=user_input,
+                                context=current_context,
+                                answer=reference,
+                            ),
+                            llm=self.llm,
+                            callbacks=callbacks,
+                        )
+                    )
+                    # Assuming generate_multiple for this prompt structure returns one Verification or a list
+                    # and ensembler handles it to pick the best one.
+                    # The original code did responses.append([result.model_dump() for result in verdicts])
+                    # then ensembler.from_discrete([response], "verdict")
+                    # This implies verdicts_list might have multiple items if generate_multiple is used that way.
+                    # For simplicity, let's assume generate_multiple with this prompt gives one main Verification,
+                    # or we use the ensembler correctly.
+                    
+                    if not verdicts_list:
+                        return None
+
+                    # Ensembling step from original code:
+                    # Convert Pydantic models to dicts for ensembler if that's what it expects
+                    raw_verdicts_for_ensembler = [v.model_dump() for v in verdicts_list]
+                    if not raw_verdicts_for_ensembler: # Should be caught by 'if not verdicts_list'
+                        return None
+                    
+                    ensembled_raw_answer = ensembler.from_discrete([raw_verdicts_for_ensembler], "verdict")
+                    if not ensembled_raw_answer:
+                        return None
+                    return Verification(**ensembled_raw_answer[0])
+
+                llm_result = await _llm_call_for_context()
+
+                if llm_result is not None and current_cache_instance:
+                    # Store the result (Verification object) in cache
+                    # using current_context as the "prompt" key for semantic storage.
+                    current_cache_instance.set(
+                        test_case_id=test_case_id,
+                        prompt=current_context, 
+                        llm_result=llm_result 
+                    )
+                    logger.debug(f"Cache SET for test_case_id='{test_case_id}', context_idx={i}")
+            
+            if llm_result is not None:
+                answers.append(llm_result)
+            else:
+                logger.warning(f"LLM call failed or returned None for test_case_id='{test_case_id}', context_idx={i}. This context won't be scored.")
+
+        if not answers and retrieved_contexts: # Only warn if contexts existed but no answers were derived
+             logger.warning(
+                f"No verifiable answers derived for test_case_id='{test_case_id}' despite having {len(retrieved_contexts)} contexts. Result might be NaN."
             )
-
-            responses.append([result.model_dump() for result in verdicts])
-
-        answers = []
-        for response in responses:
-            agg_answer = ensembler.from_discrete([response], "verdict")
-            answers.append(Verification(**agg_answer[0]))
-
+        
         score = self._calculate_average_precision(answers)
         return score
 

@@ -96,3 +96,84 @@ Let's examine how faithfulness was calculated using the low faithfulness answer:
     $$
     \text{Faithfulness} = { \text{1} \over \text{2} } = 0.5
     $$
+
+## Optimizing with Sentence-Level Semantic Caching
+
+The `Faithfulness` metric evaluates individual statements generated from the response against the provided context. This process, especially the verification step (`_create_verdicts`), can involve multiple LLM calls for each statement. To optimize this and reduce redundant computations, `Faithfulness` can leverage a specialized cache: `SentenceEvaluatorSemanticCache`.
+
+This cache stores the verdict for a statement based on its semantic similarity to previously evaluated statements, but only if the surrounding context remains identical.
+
+### How `Faithfulness` Uses `SentenceEvaluatorSemanticCache`
+
+1.  **Context Hashing**: For each (question, answer, retrieved_contexts) group, the `retrieved_contexts` are concatenated and hashed. This hash serves as the `primary_context_or_hash` for the `SentenceEvaluatorSemanticCache`. This ensures that statement verdicts are only compared if they were made against the exact same body of retrieved context.
+2.  **Statement Evaluation**: When `_create_verdicts` is called:
+    *   For each statement, it first checks the `sentence_cache` using the statement text and the context hash.
+    *   If a semantically similar statement (above the cache's `similarity_threshold`) is found for the *exact same context hash*, the cached verdict is used.
+    *   Only statements not found in the cache (or not meeting the similarity threshold) are sent to the LLM for evaluation.
+    *   New verdicts obtained from the LLM are then stored in the `sentence_cache` for future use.
+
+### Enabling Sentence-Level Caching for `Faithfulness`
+
+You can enable sentence-level caching for a `Faithfulness` metric instance by assigning a `SentenceEvaluatorSemanticCache` object to its `sentence_cache` attribute.
+
+**1. Using the Globally Configured Sentence Cache:**
+
+Ragas provides a globally configured instance at `ragas.config.ragas_sentence_eval_cache`. You can assign this to your metric:
+
+```python
+from ragas.metrics import Faithfulness
+from ragas.llms import LangchainLLMWrapper # Assuming you have an LLM wrapper
+from langchain_openai import ChatOpenAI # Example LLM
+import ragas.config # Import the config module
+
+# Initialize your LLM
+evaluator_llm = LangchainLLMWrapper(ChatOpenAI(model_name="gpt-3.5-turbo"))
+
+# Initialize Faithfulness metric
+faithfulness_metric = Faithfulness(llm=evaluator_llm)
+
+# Enable sentence-level caching using the global cache
+# This global cache is configured by RAGAS_SENTENCE_EVAL_* environment variables
+if ragas.config.ragas_sentence_eval_cache is not None:
+    faithfulness_metric.sentence_cache = ragas.config.ragas_sentence_eval_cache
+    print("Faithfulness metric is now using the global sentence evaluation cache.")
+else:
+    print("Global sentence evaluation cache is not enabled/configured.")
+
+# Now, when you use faithfulness_metric.ascore(...) or evaluate(...),
+# it will attempt to use this cache for sentence verdicts.
+```
+
+**2. Using a Manually Configured `SentenceEvaluatorSemanticCache`:**
+
+If you need more specific control or want to use a different configuration than the global one:
+
+```python
+from ragas.metrics import Faithfulness
+from ragas.llms import LangchainLLMWrapper
+from langchain_openai import ChatOpenAI
+from ragas.cache import SentenceEvaluatorSemanticCache
+from ragas.embeddings import OpenAIEmbeddings # Or any other Ragas-compatible embedding model
+
+# Initialize your LLM
+evaluator_llm = LangchainLLMWrapper(ChatOpenAI(model_name="gpt-3.5-turbo"))
+
+# Initialize your embedding model for the cache
+# Ensure API keys are set if using cloud-based embeddings like OpenAI
+my_sentence_embed_model = OpenAIEmbeddings(model_name="text-embedding-ada-002")
+
+# Create and configure the sentence cache instance
+manual_sentence_cache = SentenceEvaluatorSemanticCache(
+    embedding_model=my_sentence_embed_model,
+    similarity_threshold=0.85 # Adjust as needed
+)
+
+# Initialize Faithfulness metric and assign the manual cache
+faithfulness_metric_manual_cache = Faithfulness(llm=evaluator_llm)
+faithfulness_metric_manual_cache.sentence_cache = manual_sentence_cache
+print("Faithfulness metric is now using a manually configured sentence evaluation cache.")
+
+# This instance will use 'manual_sentence_cache'.
+```
+
+By enabling sentence-level caching, you can significantly speed up `Faithfulness` evaluations, especially on large datasets or when re-evaluating with minor changes, while ensuring that semantic nuances are still considered for cache hits. Refer to the [Caching Reference (`docs/references/cache.md`)](../references/cache.md) for more details on `SentenceEvaluatorSemanticCache` and its global configuration.

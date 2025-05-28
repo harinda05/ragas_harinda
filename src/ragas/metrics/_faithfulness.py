@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib 
 import logging
 import typing as t
 from dataclasses import dataclass, field
@@ -7,7 +8,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from pydantic import BaseModel, Field
 
+from ragas.cache import ComprehensiveSemanticCache
 from ragas.dataset_schema import SingleTurnSample
+import ragas.config # Added import for global cache
 from ragas.metrics.base import (
     MetricOutputType,
     MetricType,
@@ -148,6 +151,16 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
         default_factory=StatementGeneratorPrompt
     )
     max_retries: int = 1
+    # sentence_cache: t.Optional[SentenceEvaluatorSemanticCache] -- This was the old one
+    comprehensive_cache: t.Optional[ComprehensiveSemanticCache] = field(default=None, repr=False)
+
+    def __post_init__(self):
+        # Initialize comprehensive_cache from global config if not already set
+        if getattr(self, 'comprehensive_cache', None) is None:
+            self.comprehensive_cache = ragas.config.ragas_comprehensive_cache
+        
+        # Call super().__post_init__() if MetricWithLLM or SingleTurnMetric had one.
+        # super().__post_init__() # Assuming not needed for now.
 
     async def _create_verdicts(
         self, row: t.Dict, statements: t.List[str], callbacks: Callbacks
@@ -155,13 +168,90 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
         assert self.llm is not None, "llm must be set to compute score"
 
         contexts_str: str = "\n".join(row["retrieved_contexts"])
-        verdicts = await self.nli_statements_prompt.generate(
-            data=NLIStatementInput(context=contexts_str, statements=statements),
-            llm=self.llm,
-            callbacks=callbacks,
-        )
+        current_cache_instance = getattr(self, "comprehensive_cache", None)
 
-        return verdicts
+        # Create a unique ID for this test case based on user_input, response, and contexts_str
+        # Using these ensures that if any part of the core input changes, it's a new test case for caching.
+        test_case_comps = (
+            row.get("user_input", ""), 
+            row.get("response", ""), # The statements are derived from response
+            contexts_str
+        )
+        test_case_id_str = "".join(test_case_comps)
+        test_case_id = hashlib.sha256(test_case_id_str.encode()).hexdigest()
+        
+        final_statement_answers: t.List[StatementFaithfulnessAnswer] = []
+
+        for i, statement_text in enumerate(statements):
+            # The "prompt" for caching purposes here is the statement_text itself.
+            # The ComprehensiveSemanticCache will use this for semantic comparison.
+            # The test_case_id scopes this to the particular (user_input, response, contexts_str) combination.
+            
+            llm_result_for_statement: t.Optional[StatementFaithfulnessAnswer] = None
+
+            if current_cache_instance:
+                # ComprehensiveSemanticCache.get expects `test_case_id` and `current_prompt` (which is statement_text here)
+                # The value stored/retrieved should be the StatementFaithfulnessAnswer object.
+                cached_value = current_cache_instance.get(
+                    test_case_id=test_case_id,
+                    current_prompt=statement_text 
+                )
+                if cached_value is not None:
+                    if isinstance(cached_value, StatementFaithfulnessAnswer):
+                        llm_result_for_statement = cached_value
+                        logger.debug(f"ComprehensiveCache HIT for test_case_id='{test_case_id}', statement_idx={i}")
+                    else:
+                        logger.warning(
+                            f"ComprehensiveCache HIT but unexpected type for test_case_id='{test_case_id}', statement_idx={i}. Expected StatementFaithfulnessAnswer, got {type(cached_value)}. Ignoring."
+                        )
+            
+            if llm_result_for_statement is None: # Cache MISS or invalid cached type
+                logger.debug(f"ComprehensiveCache MISS for test_case_id='{test_case_id}', statement_idx={i}. Calling LLM.")
+
+                async def _llm_call_for_statement() -> t.Optional[StatementFaithfulnessAnswer]:
+                    # Call LLM for a single statement
+                    # The NLIStatementPrompt expects a list of statements, so we pass a list with one item.
+                    nli_output = await self.nli_statements_prompt.generate(
+                        data=NLIStatementInput(
+                            context=contexts_str, statements=[statement_text] # Process one statement
+                        ),
+                        llm=self.llm,
+                        callbacks=callbacks,
+                    )
+                    # nli_output.statements should be a list containing one StatementFaithfulnessAnswer
+                    if nli_output and nli_output.statements and len(nli_output.statements) == 1:
+                        return nli_output.statements[0]
+                    else:
+                        logger.error(
+                            f"LLM did not return a valid NLIStatementOutput for single statement '{statement_text}'. Output: {nli_output}"
+                        )
+                        return None
+
+                llm_result_for_statement = await _llm_call_for_statement()
+
+                if llm_result_for_statement is not None and current_cache_instance:
+                    # Store the result (StatementFaithfulnessAnswer object) in cache
+                    # using statement_text as the "prompt" key for semantic storage.
+                    current_cache_instance.set(
+                        test_case_id=test_case_id,
+                        prompt=statement_text, 
+                        llm_result=llm_result_for_statement 
+                    )
+                    logger.debug(f"ComprehensiveCache SET for test_case_id='{test_case_id}', statement_idx={i}")
+            
+            if llm_result_for_statement is not None:
+                final_statement_answers.append(llm_result_for_statement)
+            else:
+                # If LLM call failed for this statement, we might skip it or use a default error verdict.
+                # For now, skipping means it won't be part of the NLIStatementOutput.
+                # This could affect the faithfulness score if some statements are omitted.
+                # A more robust approach might be to create a default error StatementFaithfulnessAnswer.
+                logger.warning(
+                    f"LLM call failed or returned None for statement_idx={i} ('{statement_text}'). "
+                    "This statement will not be included in the final verdicts."
+                )
+        
+        return NLIStatementOutput(statements=final_statement_answers)
 
     async def _create_statements(
         self, row: t.Dict, callbacks: Callbacks
