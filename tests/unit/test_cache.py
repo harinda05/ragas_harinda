@@ -39,7 +39,7 @@ class MockEmbeddings(BaseRagasEmbeddings):
         return embedding.tolist()
 
     async def embed_query_async(self, text: str) -> List[float]:
-        await asyncio.sleep(0) 
+        await asyncio.sleep(0)
         return self.embed_query(text)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -70,7 +70,7 @@ def semantic_cache_backend_factory(mock_embeddings_instance: MockEmbeddings):
         )
         # Ensure cache is clean for each test/instance
         # SemanticCacheBackend.cache is a list, so clear it.
-        cache.cache.clear() 
+        cache.cache.clear()
         return cache
     return _factory
 
@@ -103,7 +103,7 @@ def test_semantic_cache_hit_simple(semantic_cache_backend_factory, call_counter:
     assert res1 == f"Data for {text_original}"
 
     res2 = get_data(text_paraphrased_high_similarity) # Sim 0.95 >= 0.90, HIT
-    assert call_counter == 1 
+    assert call_counter == 1
     assert res2 == f"Data for {text_original}" # Returns original cached value
 
 def test_semantic_cache_miss_different_meaning(semantic_cache_backend_factory, call_counter: CallCounter):
@@ -114,7 +114,7 @@ def test_semantic_cache_miss_different_meaning(semantic_cache_backend_factory, c
         call_counter.increment()
         return f"Data for {prompt}"
 
-    get_data(text_original) 
+    get_data(text_original)
     assert call_counter == 1
 
     get_data(text_different)  # Sim with A is 0.0 < 0.90, MISS
@@ -123,7 +123,7 @@ def test_semantic_cache_miss_different_meaning(semantic_cache_backend_factory, c
 
 def test_semantic_cache_miss_due_to_threshold(semantic_cache_backend_factory):
     # text_paraphrased_medium_similarity has sim 0.80 with text_original (embedding_A)
-    
+
     # Test with low threshold (should hit)
     cache_low_thresh = semantic_cache_backend_factory(threshold=0.75)
     counter_low = CallCounter()
@@ -135,7 +135,7 @@ def test_semantic_cache_miss_due_to_threshold(semantic_cache_backend_factory):
     get_data_low_thresh(text_original) # Stored
     assert counter_low == 1
     res_low2 = get_data_low_thresh(text_paraphrased_medium_similarity) # Sim 0.80 >= 0.75, HIT
-    assert counter_low == 1 
+    assert counter_low == 1
     assert res_low2 == f"Data for {text_original}"
 
     # Test with high threshold (should miss)
@@ -154,7 +154,7 @@ def test_semantic_cache_miss_due_to_threshold(semantic_cache_backend_factory):
 
 
 def test_semantic_cache_hybrid_hit(semantic_cache_backend_factory, call_counter: CallCounter):
-    cache = semantic_cache_backend_factory(threshold=0.90) 
+    cache = semantic_cache_backend_factory(threshold=0.90)
 
     @cacher(cache_backend=cache)
     def get_data_hybrid(prompt: str, temp: float) -> str:
@@ -164,7 +164,7 @@ def test_semantic_cache_hybrid_hit(semantic_cache_backend_factory, call_counter:
     res1 = get_data_hybrid(text_original, temp=0.5)
     assert call_counter == 1
     assert res1 == f"Data for {text_original} with temp 0.5"
-    
+
     # Semantic part (prompt) is similar (0.95 >= 0.90), non-semantic part (temp) is identical
     res2 = get_data_hybrid(text_paraphrased_high_similarity, temp=0.5) # HIT
     assert call_counter == 1
@@ -179,9 +179,9 @@ def test_semantic_cache_hybrid_miss_non_semantic_arg(semantic_cache_backend_fact
         call_counter.increment()
         return f"Data for {prompt} with temp {temp}"
 
-    get_data_hybrid(text_original, temp=0.5) 
+    get_data_hybrid(text_original, temp=0.5)
     assert call_counter == 1
-    
+
     # Semantic part (prompt) is similar (0.95 >= 0.90), but non-semantic part (temp) is different
     get_data_hybrid(text_paraphrased_high_similarity, temp=0.8) # MISS
     assert call_counter == 2
@@ -197,12 +197,12 @@ def test_semantic_cache_no_semantic_part(semantic_cache_backend_factory, call_co
     # _parse_key_str returns None if no string arg is found.
     # SemanticCacheBackend.set and .get return early if parse fails.
     # So, no caching occurs via semantic logic.
-    get_data_no_string(10, True) 
+    get_data_no_string(10, True)
     assert call_counter == 1
     assert len(cache.cache) == 0 # Nothing cached as semantic part not found by SemanticCacheBackend
-    
+
     get_data_no_string(10, True) # MISS (no semantic caching occurred)
-    assert call_counter == 2 
+    assert call_counter == 2
     assert len(cache.cache) == 0
 
 
@@ -213,7 +213,7 @@ async def test_async_semantic_cache_hit(semantic_cache_backend_factory, call_cou
     @cacher(cache_backend=cache)
     async def get_data_async(prompt: str) -> str:
         call_counter.increment()
-        await asyncio.sleep(0.001) 
+        await asyncio.sleep(0.001)
         return f"Async data for {prompt}"
 
     res1 = await get_data_async(text_original)
@@ -221,7 +221,7 @@ async def test_async_semantic_cache_hit(semantic_cache_backend_factory, call_cou
     assert res1 == f"Async data for {text_original}"
 
     res2 = await get_data_async(text_paraphrased_high_similarity) # HIT
-    assert call_counter == 1 
+    assert call_counter == 1
     assert res2 == f"Async data for {text_original}"
 
 
@@ -245,7 +245,7 @@ def test_semantic_cache_zero_norm_embeddings(semantic_cache_backend_factory, cal
     cache = semantic_cache_backend_factory(threshold=0.0) # Threshold is 0.0
 
     # MockEmbeddings already maps text_for_zeronorm to [0,0,0]
-    
+
     @cacher(cache_backend=cache)
     def get_data_zero_norm(prompt: str) -> str:
         call_counter.increment()
@@ -255,7 +255,7 @@ def test_semantic_cache_zero_norm_embeddings(semantic_cache_backend_factory, cal
     res1 = get_data_zero_norm(text_for_zeronorm)
     assert call_counter == 1
     assert len(cache.cache) == 1
-    
+
     # Query again with "text_for_zeronorm". Embedding is [0,0,0].
     # Stored embedding is [0,0,0]. Similarity is 0.0.
     # Threshold is 0.0. Condition: 0.0 >= 0.0 is True. So, HIT.
@@ -292,7 +292,7 @@ def test_semantic_cache_empty_embedding_from_model(semantic_cache_backend_factor
     # SemanticCacheBackend.set: embedding = np.array([]) -> embedding.size == 0 -> returns early.
     # SemanticCacheBackend.get: input_embedding.size == 0 -> returns None.
     get_data_bad_embed(text_for_empty_emb)
-    assert call_counter == 1 
+    assert call_counter == 1
     assert len(cache.cache) == 0 # Nothing stored as embedding failed.
 
     get_data_bad_embed(text_for_empty_emb) # Call again
@@ -302,7 +302,7 @@ def test_semantic_cache_empty_embedding_from_model(semantic_cache_backend_factor
 
 def test_semantic_cache_non_string_semantic_part_behavior(semantic_cache_backend_factory, call_counter: CallCounter, mock_embeddings_instance: MockEmbeddings):
     cache = semantic_cache_backend_factory(threshold=0.9)
-    
+
     # Ensure the mock embeddings instance (used by the factory) is updated for this test
     # if new text values are introduced as semantic parts.
     mock_embeddings_instance.embedding_map["hello_semantic"] = embedding_A
@@ -320,18 +320,18 @@ def test_semantic_cache_non_string_semantic_part_behavior(semantic_cache_backend
 
     # Semantic hit on "hello_semantic" vs "paraphrased_hello_semantic" (sim 0.95 >= 0.90)
     # Other args (1, True) are the same. Should be a HIT.
-    res2 = get_data_mixed_args(1, "paraphrased_hello_semantic", True) 
+    res2 = get_data_mixed_args(1, "paraphrased_hello_semantic", True)
     assert call_counter == 1 # HIT
     assert res2 == f"Data: 1, hello_semantic, True" # Returns original value
 
     # Semantic part similar, but non-semantic arg_bool changed: MISS
-    res3 = get_data_mixed_args(1, "paraphrased_hello_semantic", False) 
+    res3 = get_data_mixed_args(1, "paraphrased_hello_semantic", False)
     assert call_counter == 2 # MISS
     assert len(cache.cache) == 2
     assert res3 == f"Data: 1, paraphrased_hello_semantic, False"
 
     # Semantic part similar, non-semantic arg_bool same as previous, but arg_int changed: MISS
-    res4 = get_data_mixed_args(2, "paraphrased_hello_semantic", False) 
+    res4 = get_data_mixed_args(2, "paraphrased_hello_semantic", False)
     assert call_counter == 3 # MISS
     assert len(cache.cache) == 3
     assert res4 == f"Data: 2, paraphrased_hello_semantic, False"
@@ -347,7 +347,7 @@ def test_semantic_cache_non_string_semantic_part_behavior(semantic_cache_backend
 # --- Tests for SentenceEvaluatorSemanticCache ---
 import logging # For caplog
 # SentenceEvaluatorSemanticCache is already imported at the top if this is the same file
-# from ragas.cache import SentenceEvaluatorSemanticCache 
+# from ragas.cache import SentenceEvaluatorSemanticCache
 # BaseRagasEmbeddings is already imported
 
 # Mock Embedding Model for SentenceEvaluatorSemanticCache
@@ -371,7 +371,7 @@ class MockSentenceEmbeddings(BaseRagasEmbeddings):
         return [self.embed_query(text) for text in texts]
 
     def set_run_config(self, run_config): # Add if BaseRagasEmbeddings requires it
-        pass 
+        pass
 
 # Test Data and Embeddings for SentenceEvaluatorSemanticCache
 # Using pre-normalized vectors for exact cosine similarities
@@ -382,13 +382,13 @@ s_emb_B = np.array([0.0, 1.0, 0.0]) # Orthogonal to A, CosSim = 0
 s_emb_zeronorm = np.array([0.0, 0.0, 0.0]) # Zero-norm vector
 
 s_text_A1 = "The cat sat on the mat."
-s_text_A2_similar_high = "A feline was resting on the rug." 
-s_text_A3_similar_low = "The cat was on a mat." 
-s_text_B_dissimilar = "The dog barked loudly." 
+s_text_A2_similar_high = "A feline was resting on the rug."
+s_text_A3_similar_low = "The cat was on a mat."
+s_text_B_dissimilar = "The dog barked loudly."
 s_text_zeronorm = "text for zero norm sentence cache"
 
-s_context1 = "location:house#section:livingroom" 
-s_context2 = "location:garden#section:lawn"    
+s_context1 = "location:house#section:livingroom"
+s_context2 = "location:garden#section:lawn"
 
 @pytest.fixture(scope="function")
 def mock_sentence_embeddings_instance() -> MockSentenceEmbeddings:
@@ -406,10 +406,10 @@ def sentence_cache_factory_fixture(mock_sentence_embeddings_instance: MockSenten
     def _factory(threshold: float, embedding_model: Optional[BaseRagasEmbeddings] = mock_sentence_embeddings_instance) -> SentenceEvaluatorSemanticCache:
         # Allow passing None for embedding_model for specific tests
         cache = SentenceEvaluatorSemanticCache(
-            embedding_model=embedding_model, # type: ignore 
+            embedding_model=embedding_model, # type: ignore
             similarity_threshold=threshold
         )
-        cache.cache.clear() 
+        cache.cache.clear()
         return cache
     return _factory
 
@@ -428,16 +428,16 @@ def test_s_cache_initialization(mock_sentence_embeddings_instance, caplog):
 
 def test_s_cache_set_and_get_semantic_hit(sentence_cache_factory_fixture):
     cache = sentence_cache_factory_fixture(threshold=0.85) # Sim for A1 and A2_similar_high is 0.9
-    
+
     cache.set(s_text_A1, s_context1, "result_A1")
     assert len(cache.cache) == 1
-    
+
     result = cache.get(s_text_A2_similar_high, s_context1)
     assert result == "result_A1"
 
 def test_s_cache_semantic_miss_dissimilar(sentence_cache_factory_fixture):
     cache = sentence_cache_factory_fixture(threshold=0.8)
-    
+
     cache.set(s_text_A1, s_context1, "result_A1")
     result = cache.get(s_text_B_dissimilar, s_context1) # Sim is 0.0
     assert result is None
@@ -450,7 +450,7 @@ def test_s_cache_semantic_miss_threshold(sentence_cache_factory_fixture):
     assert result_miss is None
 
     cache_low_thresh = sentence_cache_factory_fixture(threshold=0.65)
-    cache_low_thresh.set(s_text_A1, s_context1, "result_A1_low") 
+    cache_low_thresh.set(s_text_A1, s_context1, "result_A1_low")
     result_hit = cache_low_thresh.get(s_text_A3_similar_low, s_context1) # 0.7 >= 0.65
     assert result_hit == "result_A1_low"
 
@@ -461,30 +461,30 @@ def test_s_cache_semantic_miss_threshold(sentence_cache_factory_fixture):
 
 
 def test_s_cache_semantic_hit_context_miss(sentence_cache_factory_fixture):
-    cache = sentence_cache_factory_fixture(threshold=0.85) 
+    cache = sentence_cache_factory_fixture(threshold=0.85)
     cache.set(s_text_A1, s_context1, "result_A1_ctx1")
-    
+
     result = cache.get(s_text_A2_similar_high, s_context2) # Different context
     assert result is None
 
 def test_s_cache_exact_match_same_sentence_diff_context(sentence_cache_factory_fixture):
     cache = sentence_cache_factory_fixture(threshold=0.99) # High threshold
-    
+
     cache.set(s_text_A1, s_context1, "result_A1_ctx1")
     cache.set(s_text_A1, s_context2, "result_A1_ctx2")
-    
+
     assert cache.get(s_text_A1, s_context1) == "result_A1_ctx1"
     assert cache.get(s_text_A1, s_context2) == "result_A1_ctx2"
 
 def test_s_cache_no_embedding_model(caplog):
     # Directly construct as factory expects a (potentially non-None) model by default
     cache = SentenceEvaluatorSemanticCache(embedding_model=None, similarity_threshold=0.8) # type: ignore
-    
+
     with caplog.at_level(logging.WARNING):
         cache.set(s_text_A1, s_context1, "result_A1")
     assert "embedding model is not available" in caplog.text
     assert len(cache.cache) == 0
-    
+
     assert cache.get(s_text_A1, s_context1) is None
 
 
@@ -500,7 +500,7 @@ def test_s_cache_embedding_failure_get(sentence_cache_factory_fixture, caplog):
     # Set an item with a working model first
     cache = sentence_cache_factory_fixture(threshold=0.8)
     cache.set(s_text_A1, s_context1, "result_A1") # This uses mock_sentence_embeddings_instance
-    
+
     # Now, simulate failure for the 'get' operation by replacing the model
     cache.embedding_model = FailingMockSentenceEmbeddings()
 
@@ -523,12 +523,12 @@ def test_s_cache_embedding_failure_set(sentence_cache_factory_fixture, caplog):
 def test_s_cache_zero_norm_embedding_handling(sentence_cache_factory_fixture, caplog):
     cache = sentence_cache_factory_fixture(threshold=0.8)
     # mock_sentence_embeddings_instance maps s_text_zeronorm to [0,0,0]
-    
+
     # Test SET with zero-norm embedding
     # Current SentenceEvaluatorSemanticCache.set implementation *does* store zero-norm embeddings.
     # It only logs for zero-dimensional or empty, not zero-norm.
     cache.set(s_text_zeronorm, s_context1, "result_zero_norm")
-    assert len(cache.cache) == 1 
+    assert len(cache.cache) == 1
     # No warning expected on set for zero-norm, only for zero-size/dim.
 
     caplog.clear()
@@ -546,7 +546,7 @@ def test_s_cache_zero_norm_embedding_handling(sentence_cache_factory_fixture, ca
     # Store an item with zero-norm embedding first
     cache.set(s_text_zeronorm, s_context1, "result_zero_norm_item")
     assert len(cache.cache) == 1
-    
+
     # Now query with a normal sentence (s_text_A1)
     # The cache loop in `get` should skip the cached item with zero-norm embedding.
     result_normal_query = cache.get(s_text_A1, s_context1)

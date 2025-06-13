@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib 
+import hashlib
 import logging
 import typing as t
 from dataclasses import dataclass, field
@@ -158,7 +158,7 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
         # Initialize comprehensive_cache from global config if not already set
         if getattr(self, 'comprehensive_cache', None) is None:
             self.comprehensive_cache = ragas.config.ragas_comprehensive_cache
-        
+
         # Call super().__post_init__() if MetricWithLLM or SingleTurnMetric had one.
         # super().__post_init__() # Assuming not needed for now.
 
@@ -173,20 +173,20 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
         # Create a unique ID for this test case based on user_input, response, and contexts_str
         # Using these ensures that if any part of the core input changes, it's a new test case for caching.
         test_case_comps = (
-            row.get("user_input", ""), 
+            row.get("user_input", ""),
             row.get("response", ""), # The statements are derived from response
             contexts_str
         )
         test_case_id_str = "".join(test_case_comps)
         test_case_id = hashlib.sha256(test_case_id_str.encode()).hexdigest()
-        
+
         final_statement_answers: t.List[StatementFaithfulnessAnswer] = []
 
         for i, statement_text in enumerate(statements):
             # The "prompt" for caching purposes here is the statement_text itself.
             # The ComprehensiveSemanticCache will use this for semantic comparison.
             # The test_case_id scopes this to the particular (user_input, response, contexts_str) combination.
-            
+
             llm_result_for_statement: t.Optional[StatementFaithfulnessAnswer] = None
 
             if current_cache_instance:
@@ -194,7 +194,7 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
                 # The value stored/retrieved should be the StatementFaithfulnessAnswer object.
                 cached_value = current_cache_instance.get(
                     test_case_id=test_case_id,
-                    current_prompt=statement_text 
+                    current_prompt=statement_text
                 )
                 if cached_value is not None:
                     if isinstance(cached_value, StatementFaithfulnessAnswer):
@@ -204,7 +204,7 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
                         logger.warning(
                             f"ComprehensiveCache HIT but unexpected type for test_case_id='{test_case_id}', statement_idx={i}. Expected StatementFaithfulnessAnswer, got {type(cached_value)}. Ignoring."
                         )
-            
+
             if llm_result_for_statement is None: # Cache MISS or invalid cached type
                 logger.debug(f"ComprehensiveCache MISS for test_case_id='{test_case_id}', statement_idx={i}. Calling LLM.")
 
@@ -234,11 +234,11 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
                     # using statement_text as the "prompt" key for semantic storage.
                     current_cache_instance.set(
                         test_case_id=test_case_id,
-                        prompt=statement_text, 
-                        llm_result=llm_result_for_statement 
+                        prompt=statement_text,
+                        llm_result=llm_result_for_statement
                     )
                     logger.debug(f"ComprehensiveCache SET for test_case_id='{test_case_id}', statement_idx={i}")
-            
+
             if llm_result_for_statement is not None:
                 final_statement_answers.append(llm_result_for_statement)
             else:
@@ -250,7 +250,7 @@ class Faithfulness(MetricWithLLM, SingleTurnMetric):
                     f"LLM call failed or returned None for statement_idx={i} ('{statement_text}'). "
                     "This statement will not be included in the final verdicts."
                 )
-        
+
         return NLIStatementOutput(statements=final_statement_answers)
 
     async def _create_statements(

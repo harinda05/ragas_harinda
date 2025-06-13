@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ragas.cache import ComprehensiveSemanticCache 
+from ragas.cache import ComprehensiveSemanticCache
 from ragas.dataset_schema import SingleTurnSample
 from ragas.metrics._string import NonLLMStringSimilarity
 import ragas.config # Added import for global cache
@@ -112,17 +112,17 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
         default_factory=ContextPrecisionPrompt
     )
     max_retries: int = 1
-    comprehensive_cache: t.Optional[ComprehensiveSemanticCache] = field(default=None, repr=False) 
+    comprehensive_cache: t.Optional[ComprehensiveSemanticCache] = field(default=None, repr=False)
 
     def __post_init__(self):
         # Initialize comprehensive_cache from global config if not already set
         if getattr(self, 'comprehensive_cache', None) is None:
             self.comprehensive_cache = ragas.config.ragas_comprehensive_cache
-        
+
         # Call super().__post_init__() if MetricWithLLM or SingleTurnMetric had one.
         # Assuming they don't for now, or it's not critical for this attribute.
         # If they do, and it's important, this would be:
-        # super().__post_init__() 
+        # super().__post_init__()
 
     def _get_row_attributes(self, row: t.Dict) -> t.Tuple[str, t.List[str], t.Any]:
         return row["user_input"], row["retrieved_contexts"], row["reference"]
@@ -161,14 +161,14 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
         assert self.llm is not None, "LLM is not set"
 
         user_input, retrieved_contexts, reference = self._get_row_attributes(row)
-        
+
         # Create a unique ID for this test case based on user_input and reference
         test_case_comps = (user_input, str(reference)) # Ensure reference is string for hashing
         test_case_id_str = "".join(test_case_comps)
         test_case_id = hashlib.sha256(test_case_id_str.encode()).hexdigest()
 
         current_cache_instance = getattr(self, "comprehensive_cache", None)
-        
+
         answers: t.List[Verification] = []
 
         for i, current_context in enumerate(retrieved_contexts):
@@ -196,7 +196,7 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
                 # The "LLMResult" is the `Verification` object.
                 # So, we'll use current_context as the "prompt" for the cache.
                 cached_value = current_cache_instance.get(
-                    test_case_id=test_case_id, 
+                    test_case_id=test_case_id,
                     current_prompt=current_context # current_context is the varying part for semantic check
                 )
                 if cached_value is not None:
@@ -207,7 +207,7 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
                         logger.warning(
                             f"Cache HIT but unexpected type for test_case_id='{test_case_id}', context_idx={i}. Expected Verification, got {type(cached_value)}. Ignoring."
                         )
-            
+
             if llm_result is None: # Cache MISS or invalid cached type
                 logger.debug(f"Cache MISS for test_case_id='{test_case_id}', context_idx={i}. Calling LLM.")
                 # Define the actual LLM call as a nested function
@@ -231,7 +231,7 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
                     # This implies verdicts_list might have multiple items if generate_multiple is used that way.
                     # For simplicity, let's assume generate_multiple with this prompt gives one main Verification,
                     # or we use the ensembler correctly.
-                    
+
                     if not verdicts_list:
                         return None
 
@@ -240,7 +240,7 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
                     raw_verdicts_for_ensembler = [v.model_dump() for v in verdicts_list]
                     if not raw_verdicts_for_ensembler: # Should be caught by 'if not verdicts_list'
                         return None
-                    
+
                     ensembled_raw_answer = ensembler.from_discrete([raw_verdicts_for_ensembler], "verdict")
                     if not ensembled_raw_answer:
                         return None
@@ -253,11 +253,11 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
                     # using current_context as the "prompt" key for semantic storage.
                     current_cache_instance.set(
                         test_case_id=test_case_id,
-                        prompt=current_context, 
-                        llm_result=llm_result 
+                        prompt=current_context,
+                        llm_result=llm_result
                     )
                     logger.debug(f"Cache SET for test_case_id='{test_case_id}', context_idx={i}")
-            
+
             if llm_result is not None:
                 answers.append(llm_result)
             else:
@@ -267,7 +267,7 @@ class LLMContextPrecisionWithReference(MetricWithLLM, SingleTurnMetric):
              logger.warning(
                 f"No verifiable answers derived for test_case_id='{test_case_id}' despite having {len(retrieved_contexts)} contexts. Result might be NaN."
             )
-        
+
         score = self._calculate_average_precision(answers)
         return score
 

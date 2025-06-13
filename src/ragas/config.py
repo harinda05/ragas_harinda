@@ -101,7 +101,7 @@ def _get_embedding_model(
             else DEFAULT_SEMANTIC_EMBEDDING_MODEL_HF
         )
         # Assuming HuggingfaceEmbeddings constructor takes model_name or similar
-        return HuggingfaceEmbeddings(model_name=model_to_use) 
+        return HuggingfaceEmbeddings(model_name=model_to_use)
     # Add other providers here as elif blocks
     else:
         # Log warning: Unsupported provider
@@ -148,7 +148,7 @@ def get_ragas_cache() -> Optional[CacheInterface]:
                 "Disabling cache."
             )
             return None
-        
+
         return SemanticCacheBackend(
             embedding_model=embedding_model, similarity_threshold=threshold
         )
@@ -187,7 +187,7 @@ class SentenceCacheConfig(BaseModel):
 
 def get_sentence_eval_cache() -> Optional[SentenceEvaluatorSemanticCache]:
     """
-    Initializes and returns the Ragas Sentence Evaluator Semantic Cache 
+    Initializes and returns the Ragas Sentence Evaluator Semantic Cache
     based on environment variables or defaults.
     """
     enabled_str = os.environ.get(
@@ -200,7 +200,7 @@ def get_sentence_eval_cache() -> Optional[SentenceEvaluatorSemanticCache]:
         "RAGAS_SENTENCE_EVAL_EMBEDDING_PROVIDER",
         DEFAULT_SENTENCE_EVAL_EMBEDDING_PROVIDER,
     ).lower()
-    
+
     model_name = os.environ.get("RAGAS_SENTENCE_EVAL_EMBEDDING_MODEL_NAME") # Can be None
 
     threshold_str = os.environ.get(
@@ -218,7 +218,7 @@ def get_sentence_eval_cache() -> Optional[SentenceEvaluatorSemanticCache]:
 
     # Determine the actual model name to use for the _get_embedding_model helper
     # The helper _get_embedding_model already handles provider-specific defaults if model_name is None
-    actual_model_name = model_name 
+    actual_model_name = model_name
     if model_name is None: # Pass the provider-specific default if no env var is set
         if provider == "openai":
             actual_model_name = DEFAULT_SENTENCE_EVAL_EMBEDDING_MODEL_OPENAI
@@ -275,7 +275,7 @@ def get_comprehensive_cache() -> Optional[ComprehensiveSemanticCache]:
     store_backend_type = os.environ.get(
         "RAGAS_COMPREHENSIVE_CACHE_STORE_BACKEND", DEFAULT_COMPREHENSIVE_CACHE_STORE_BACKEND
     ).lower()
-    
+
     store_instance: Optional[TestCasePartCacheStore] = None
     if store_backend_type == "inmemory":
         store_instance = InMemoryStore()
@@ -294,7 +294,7 @@ def get_comprehensive_cache() -> Optional[ComprehensiveSemanticCache]:
     embedding_provider = os.environ.get(
         "RAGAS_COMPREHENSIVE_CACHE_EMBEDDING_PROVIDER", DEFAULT_COMPREHENSIVE_CACHE_EMBEDDING_PROVIDER
     ).lower()
-    
+
     embedding_model_name_env = os.environ.get("RAGAS_COMPREHENSIVE_CACHE_EMBEDDING_MODEL_NAME") # Can be None
 
     # Determine the actual model name to pass to _get_embedding_model
@@ -304,7 +304,7 @@ def get_comprehensive_cache() -> Optional[ComprehensiveSemanticCache]:
             actual_embedding_model_name = DEFAULT_COMPREHENSIVE_CACHE_EMBEDDING_MODEL_OPENAI
         elif embedding_provider == "huggingface":
             actual_embedding_model_name = DEFAULT_COMPREHENSIVE_CACHE_EMBEDDING_MODEL_HF
-    
+
     embedding_model = _get_embedding_model(provider=embedding_provider, model_name=actual_embedding_model_name)
     if embedding_model is None:
         print(
